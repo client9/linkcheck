@@ -41,7 +41,7 @@ func main() {
 	uris := map[string]bool{}
 
 	for _, f := range files {
-		log.Printf("reading %s", f)
+		//log.Printf("reading %s", f)
 		uri := f[len(root):]
 		if *flagIndex != "" && strings.HasSuffix(uri, *flagIndex) {
 			uri = uri[:len(uri)-len(*flagIndex)]
@@ -55,8 +55,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("internal error compiling: %s", err)
 	}
+	osexit := 0
 	for _, f := range files {
-		log.Printf("reading %s", f)
+		//log.Printf("reading %s", f)
 		r, err := ioutil.ReadFile(f)
 		if err != nil {
 			log.Fatalf("FAIL: %s", err)
@@ -74,11 +75,15 @@ func main() {
 					}
 					if link.Scheme == "" && link.Host == "" {
 						if !uris[link.Path] {
-							log.Printf("    didn't find relative link: %q", link.Path)
+							log.Printf("%s: didn't find relative link: %q", f, link.Path)
+							osexit = 1
 						}
 					}
 				}
 			}
 		}
+	}
+	if osexit != 0 {
+		log.Fatalf("linkcheck failed")
 	}
 }
