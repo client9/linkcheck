@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/url"
@@ -21,6 +22,98 @@ var (
 	flagIndex = flag.String("index", "index.html", "name of index.html file")
 )
 
+// Severity of linter message
+type Severity string
+
+// Linter message severity levels.
+const (
+	Error   Severity = "error"
+	Warning Severity = "warning"
+)
+
+type Issue struct {
+	Linter   string   `json:"linter"`
+	Severity Severity `json:"severity"`
+	Path     string   `json:"path"`
+	Line     int      `json:"line"`
+	Col      int      `json:"col"`
+	Message  string   `json:"message"`
+}
+
+func printIssue(i Issue) {
+	log.Printf("%s: %s", i.Path, i.Message)
+}
+
+func IssueError(format string, a ...interface{}) Issue {
+	return Issue{
+		Severity: Error,
+		Message:  fmt.Sprintf(format, a...),
+	}
+}
+
+func IssueWarning(format string, a ...interface{}) Issue {
+	return Issue{
+		Severity: Warning,
+		Message:  fmt.Sprintf(format, a...),
+	}
+}
+
+func getHref(node *html.Node) string {
+	for _, attr := range node.Attr {
+		if attr.Key == "href" {
+			return attr.Val
+		}
+	}
+	return ""
+}
+
+type LinkCheck struct {
+	matcher cascadia.Selector
+}
+
+func NewLinkCheck() *LinkCheck {
+	return &LinkCheck{
+		matcher: cascadia.MustCompile(`a[href]`),
+	}
+}
+func (c *LinkCheck) CheckFile(fname string, uris map[string]bool) []Issue {
+	raw, err := ioutil.ReadFile(fname)
+	if err != nil {
+		issue := IssueError("unable to read: %s", err)
+		issue.Path = fname
+		return []Issue{issue}
+	}
+	issues := c.CheckHTML(raw, uris)
+	for i, _ := range issues {
+		issues[i].Path = fname
+	}
+	return issues
+}
+
+func (c *LinkCheck) CheckHTML(raw []byte, uris map[string]bool) []Issue {
+	var issues []Issue
+	doc, err := html.Parse(bytes.NewReader(raw))
+	if err != nil {
+		return append(issues, IssueError("unable to parse HTML: %s", err))
+	}
+	for _, node := range c.matcher.MatchAll(doc) {
+		href := getHref(node)
+		if href == "" {
+			// really should never happen
+			continue
+		}
+		link, err := url.Parse(href)
+		if err != nil {
+			issues = append(issues, IssueError("unable to parse url %q, %s", href, err))
+			continue
+		}
+		if link.Scheme == "" && link.Host == "" && !uris[link.Path] {
+			issues = append(issues, IssueWarning("didn't find relative link: %q", link.Path))
+		}
+	}
+	return issues
+}
+
 func main() {
 	flag.Parse()
 
@@ -34,56 +127,38 @@ func main() {
 	if *flagDebug {
 		log.Printf("root %q", root)
 	}
+
+	// get html files
 	files, err := zglob.Glob(filepath.Join(root, *flagHTML))
 	if err != nil {
 		log.Fatalf("FAIL: %s", err)
 	}
-	uris := map[string]bool{}
 
+	// compute set of URIs
+	uris := map[string]bool{}
 	for _, f := range files {
-		//log.Printf("reading %s", f)
 		uri := f[len(root):]
 		if *flagIndex != "" && strings.HasSuffix(uri, *flagIndex) {
 			uri = uri[:len(uri)-len(*flagIndex)]
 		}
-		log.Printf("uri %s", uri)
 		uris[uri] = true
 	}
 	log.Printf("Found %d uris", len(uris))
 
-	matcher, err := cascadia.Compile(`a[href]`)
-	if err != nil {
-		log.Fatalf("internal error compiling: %s", err)
-	}
-	osexit := 0
+	// check
+	checker := NewLinkCheck()
+	count := 0
 	for _, f := range files {
-		//log.Printf("reading %s", f)
-		r, err := ioutil.ReadFile(f)
-		if err != nil {
-			log.Fatalf("FAIL: %s", err)
+		issues := checker.CheckFile(f, uris)
+		for _, issue := range issues {
+			printIssue(issue)
 		}
-		doc, err := html.Parse(bytes.NewReader(r))
-		if err != nil {
-			log.Fatalf("unable to parse html: %s", err)
-		}
-		for _, node := range matcher.MatchAll(doc) {
-			for _, attr := range node.Attr {
-				if attr.Key == "href" {
-					link, err := url.Parse(attr.Val)
-					if err != nil {
-						log.Fatalf("unable to parse %q, %s", attr.Val, err)
-					}
-					if link.Scheme == "" && link.Host == "" {
-						if !uris[link.Path] {
-							log.Printf("%s: didn't find relative link: %q", f, link.Path)
-							osexit = 1
-						}
-					}
-				}
-			}
-		}
+		count += len(issues)
 	}
-	if osexit != 0 {
-		log.Fatalf("linkcheck failed")
+
+	// done
+	if count > 0 {
+		log.Fatalf("linkcheck failed with %d issues", count)
 	}
+	log.Printf("linkcheck: ok")
 }
