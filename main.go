@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/andybalholm/cascadia"
 	"github.com/mattn/go-zglob"
@@ -68,12 +70,14 @@ func getHref(node *html.Node) string {
 }
 
 type LinkCheck struct {
-	matcher cascadia.Selector
+	matcher  cascadia.Selector
+	external map[string]bool
 }
 
 func NewLinkCheck() *LinkCheck {
 	return &LinkCheck{
-		matcher: cascadia.MustCompile(`a[href]`),
+		matcher:  cascadia.MustCompile(`a[href]`),
+		external: make(map[string]bool),
 	}
 }
 func (c *LinkCheck) CheckFile(fname string, uris map[string]bool) []Issue {
@@ -91,6 +95,11 @@ func (c *LinkCheck) CheckFile(fname string, uris map[string]bool) []Issue {
 }
 
 func (c *LinkCheck) CheckHTML(raw []byte, uris map[string]bool) []Issue {
+	tr := &http.Transport{
+		ResponseHeaderTimeout: 10 * time.Second,
+	}
+	client := &http.Client{Transport: tr}
+
 	var issues []Issue
 	doc, err := html.Parse(bytes.NewReader(raw))
 	if err != nil {
@@ -107,9 +116,45 @@ func (c *LinkCheck) CheckHTML(raw []byte, uris map[string]bool) []Issue {
 			issues = append(issues, IssueError("unable to parse url %q, %s", href, err))
 			continue
 		}
-		if link.Scheme == "" && link.Host == "" && !uris[link.Path] {
-			issues = append(issues, IssueWarning("didn't find relative link: %q", link.Path))
+
+		// if internal reference
+		if link.Scheme == "" && link.Host == "" {
+			if !uris[link.Path] {
+				issues = append(issues, IssueWarning("didn't find relative link: %q", link.Path))
+			}
+			continue
 		}
+
+		if link.Scheme != "" && link.Scheme != "http" && link.Scheme != "https" {
+			issues = append(issues, IssueError("found bogus scheme %q", href))
+			continue
+		}
+
+		// assume https
+		if link.Scheme == "" {
+			href = "https:" + href
+		}
+
+		if _, ok := c.external[href]; ok {
+			continue
+		}
+
+		//
+		log.Printf("Checking %s", href)
+		res, err := client.Get(href)
+		if err != nil {
+			issues = append(issues, IssueError("external link %q failed: %s", href, err))
+			c.external[href] = false
+			continue
+		}
+		res.Body.Close()
+		if res.StatusCode != 200 {
+			issues = append(issues, IssueError("external link %q returned status %s", href, res.Status))
+			c.external[href] = false
+			continue
+		}
+		c.external[href] = true
+
 	}
 	return issues
 }
