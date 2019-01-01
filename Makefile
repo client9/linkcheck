@@ -17,6 +17,7 @@ dep: ## list dependencies and available updates
 	go list -u -m all
 
 update: ## update all dependencies
+	go mod tidy
 	go get -u 
 
 .PHONY: help ci bench
