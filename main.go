@@ -120,7 +120,7 @@ func (c *LinkCheck) CheckHTML(raw []byte, uris map[string]bool) []Issue {
 		// if internal reference
 		if link.Scheme == "" && link.Host == "" {
 			if !uris[link.Path] {
-				issues = append(issues, IssueWarning("didn't find relative link: %q", link.Path))
+				issues = append(issues, IssueError("didn't find relative link: %q", link.Path))
 			}
 			continue
 		}
@@ -143,13 +143,13 @@ func (c *LinkCheck) CheckHTML(raw []byte, uris map[string]bool) []Issue {
 		log.Printf("Checking %s", href)
 		res, err := client.Get(href)
 		if err != nil {
-			issues = append(issues, IssueError("external link %q failed: %s", href, err))
+			issues = append(issues, IssueWarning("external link %q failed: %s", href, err))
 			c.external[href] = false
 			continue
 		}
 		res.Body.Close()
 		if res.StatusCode != 200 {
-			issues = append(issues, IssueError("external link %q returned status %s", href, res.Status))
+			issues = append(issues, IssueWarning("external link %q returned status %s", href, res.Status))
 			c.external[href] = false
 			continue
 		}
