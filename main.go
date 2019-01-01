@@ -192,18 +192,18 @@ func main() {
 
 	// check
 	checker := NewLinkCheck()
-	count := 0
+	counts := make(map[Severity]int)
 	for _, f := range files {
 		issues := checker.CheckFile(f, uris)
 		for _, issue := range issues {
+			counts[issue.Severity]++
 			printIssue(issue)
 		}
-		count += len(issues)
 	}
 
 	// done
-	if count > 0 {
-		log.Fatalf("linkcheck failed with %d issues", count)
+	if counts[Error] > 0 {
+		log.Fatalf("linkcheck failed with %d errors", counts[Error])
 	}
 	log.Printf("linkcheck: ok")
 }
