@@ -13,6 +13,12 @@ clean:  ## clean up time
 	go clean ./...
 	git gc --aggressive
 
+dep: ## list dependencies and available updates
+	go list -u -m all
+
+update: ## update all dependencies
+	go get -u 
+
 .PHONY: help ci bench
 
 # https://www.client9.com/automatically-install-git-hooks/
